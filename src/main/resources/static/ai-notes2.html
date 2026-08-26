@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spring AI 第二层：Schema Tool 复习资料</title>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;background:#f7f8fa;color:#1f2937;line-height:1.75}main{max-width:980px;margin:auto;padding:32px 20px 64px}h1{font-size:32px;margin:0 0 8px}h2{margin-top:38px;padding-bottom:8px;border-bottom:1px solid #e5e7eb;font-size:24px}h3{margin-top:24px}.muted{color:#6b7280}.card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px 20px;margin:16px 0}.key{border-left:4px solid #2563eb;padding-left:14px;margin:16px 0}pre{background:#111827;color:#f9fafb;padding:16px;border-radius:10px;overflow:auto;line-height:1.55}code{font-family:Consolas,Monaco,monospace}:not(pre)>code{background:#f3f4f6;padding:2px 6px;border-radius:5px}table{width:100%;border-collapse:collapse;margin:16px 0;background:#fff}th,td{border:1px solid #e5e7eb;padding:10px 12px;text-align:left;vertical-align:top}th{background:#f3f4f6}ul,ol{padding-left:24px}
+</style>
+</head>
+<body><main>
+<h1>Spring AI 第二层：Schema Tool 复习资料</h1>
+<div class="muted">主题：选表之后，读取真实表结构与字段注释</div>
+
+<h2>1. 第二层的目标</h2>
+<p>第一层已经完成“找表”：</p>
+<pre><code>用户：查询中午时段的消费记录
+↓
+AI 选出 spend 表</code></pre>
+<p>第二层解决的是：</p>
+<div class="key"><strong>AI 已经知道要查哪张表，但还不知道真实字段，所以必须读取 Schema，不能自己猜字段。</strong></div>
+<pre><code>TableSelection → spend
+↓
+getTableSchema("spend")
+↓
+PostgreSQL
+↓
+字段名 / 类型 / nullable / 注释
+↓
+返回给 AI</code></pre>
+
+<h2>2. Context 和 Tool 在这一层怎么分工</h2>
+<table><tr><th>Context</th><th>Tool</th></tr><tr><td>程序提前给 AI 的信息</td><td>AI 需要时主动调用的能力</td></tr><tr><td>业务表目录</td><td>读取指定表真实 Schema</td></tr><tr><td><code>.system(...)</code></td><td><code>@Tool</code> + <code>.tools(...)</code></td></tr></table>
+<pre><code>Context：spend = 消费记录
+↓
+AI 判断需要 spend
+↓
+Tool：getTableSchema("spend")</code></pre>
+
+<h2>3. DatabaseTools</h2>
+<pre><code>@Component
+public class DatabaseTools {
+
+    private final SchemaService schemaService;
+
+    public DatabaseTools(SchemaService schemaService) {
+        this.schemaService = schemaService;
+    }
+
+    @Tool(description = "根据数据库表名读取真实表结构，不允许自行猜测字段")
+    public TableSchema getTableSchema(
+        @ToolParam(description = "数据库表名")
+        String tableName
+    ) {
+        return schemaService.getTableSchema(tableName);
+    }
+}</code></pre>
+<table><tr><th>注解</th><th>作用</th></tr><tr><td><code>@Component</code></td><td>让 Spring 创建 Bean，可以注入到 Service</td></tr><tr><td><code>@Tool</code></td><td>告诉 Spring AI 这个方法可以给模型调用</td></tr></table>
+<p>如果漏掉 <code>@Component</code>，会出现类似：</p>
+<pre><code>required a bean of type 'com.next.ai.tool.DatabaseTools'
+that could not be found</code></pre>
+
+<h2>4. 返回对象</h2>
+<h3>ColumnMeta</h3>
+<pre><code>public record ColumnMeta(
+    String columnName,
+    String dataType,
+    String isNullable,
+    String comment
+) {}</code></pre>
+<h3>TableSchema</h3>
+<pre><code>public record TableSchema(
+    String tableName,
+    String tableComment,
+    List&lt;ColumnMeta&gt; columns
+) {}</code></pre>
+<p>返回给 AI 后类似：</p>
+<pre><code>{
+  "tableName": "spend",
+  "columns": [
+    {
+      "columnName": "created_at",
+      "dataType": "timestamp with time zone",
+      "isNullable": "YES",
+      "comment": "消费创建时间"
+    },
+    {
+      "columnName": "amount",
+      "dataType": "real",
+      "isNullable": "YES",
+      "comment": "消费金额"
+    }
+  ]
+}</code></pre>
+
+<h2>5. 为什么注释很重要</h2>
+<p>字段注释实际上是在给 AI 补“业务语义”。</p>
+<pre><code>created_at → 消费创建时间
+amount     → 消费金额
+category   → 消费分类</code></pre>
+<p>尤其数据库字段是缩写时更有帮助：</p>
+<pre><code>amt     → 消费金额
+biz_dt  → 业务发生日期
+cate_id → 消费分类ID</code></pre>
+
+<h2>6. PostgreSQL 读取字段和注释的 SQL</h2>
+<pre><code>SELECT
+    a.attname AS "columnName",
+    pg_catalog.format_type(a.atttypid, a.atttypmod) AS "dataType",
+    CASE
+        WHEN a.attnotnull THEN 'NO'
+        ELSE 'YES'
+    END AS "isNullable",
+    pg_catalog.col_description(a.attrelid, a.attnum) AS "comment"
+FROM pg_catalog.pg_attribute a
+JOIN pg_catalog.pg_class c
+    ON a.attrelid = c.oid
+JOIN pg_catalog.pg_namespace n
+    ON c.relnamespace = n.oid
+WHERE n.nspname = 'public'
+  AND c.relname = #{tableName}
+  AND a.attnum &gt; 0
+  AND NOT a.attisdropped
+ORDER BY a.attnum</code></pre>
+
+<h2>7. SQL 各部分含义</h2>
+<table><tr><th>对象 / 表达式</th><th>含义</th></tr><tr><td><code>pg_attribute</code></td><td>字段相关系统信息</td></tr><tr><td><code>pg_class</code></td><td>表、视图、索引等数据库对象</td></tr><tr><td><code>pg_namespace</code></td><td>Schema，例如 public</td></tr><tr><td><code>a.attname</code></td><td>字段名</td></tr><tr><td><code>format_type(...)</code></td><td>把 PostgreSQL 内部类型转换成人能读懂的类型</td></tr><tr><td><code>a.attnotnull</code></td><td>字段是否 NOT NULL</td></tr><tr><td><code>col_description(...)</code></td><td>字段注释</td></tr><tr><td><code>c.relname = #{tableName}</code></td><td>指定要查哪张表</td></tr><tr><td><code>a.attnum &gt; 0</code></td><td>排除 PostgreSQL 系统列</td></tr><tr><td><code>NOT a.attisdropped</code></td><td>排除已经删除的字段</td></tr></table>
+
+<h2>8. MyBatis Mapper</h2>
+<pre><code>@Mapper
+public interface SchemaMapper {
+
+    @Select("""
+        SELECT
+            a.attname AS "columnName",
+            pg_catalog.format_type(a.atttypid, a.atttypmod) AS "dataType",
+            CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS "isNullable",
+            pg_catalog.col_description(a.attrelid, a.attnum) AS "comment"
+        FROM pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
+        JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+        WHERE n.nspname = 'public'
+          AND c.relname = #{tableName}
+          AND a.attnum &gt; 0
+          AND NOT a.attisdropped
+        ORDER BY a.attnum
+        """)
+    List&lt;ColumnMeta&gt; getColumns(
+        @Param("tableName") String tableName
+    );
+}</code></pre>
+<p><code>#{tableName}</code> 是 MyBatis 参数绑定，不是直接把字符串拼进 SQL。</p>
+
+<h2>9. MyBatis 与 JPA 可以共存</h2>
+<pre><code>&lt;dependency&gt;
+    &lt;groupId&gt;org.mybatis.spring.boot&lt;/groupId&gt;
+    &lt;artifactId&gt;mybatis-spring-boot-starter&lt;/artifactId&gt;
+    &lt;version&gt;4.0.0&lt;/version&gt;
+&lt;/dependency&gt;</code></pre>
+<pre><code>JPA      → 普通固定实体 CRUD
+MyBatis  → Schema / pg_catalog 查询</code></pre>
+<p>后面进入高度动态的数据查询时，再决定继续用 MyBatis，还是引入 jOOQ。</p>
+
+<h2>10. SchemaService</h2>
+<p>除了查询 Schema，还应该做白名单检查：</p>
+<pre><code>@Service
+public class SchemaService {
+
+    private final SchemaMapper schemaMapper;
+    private final TableCatalogService tableCatalogService;
+
+    public SchemaService(
+        SchemaMapper schemaMapper,
+        TableCatalogService tableCatalogService
+    ) {
+        this.schemaMapper = schemaMapper;
+        this.tableCatalogService = tableCatalogService;
+    }
+
+    public TableSchema getTableSchema(String tableName) {
+
+        boolean allowed = tableCatalogService.getTables()
+            .stream()
+            .anyMatch(t -&gt; t.name().equals(tableName));
+
+        if (!allowed) {
+            throw new IllegalArgumentException("不允许读取该表：" + tableName);
+        }
+
+        var columns = schemaMapper.getColumns(tableName);
+        return new TableSchema(tableName, null, columns);
+    }
+}</code></pre>
+<p>因此 <code>table-catalog.json</code> 不只是给 AI 找表，也可以同时充当允许查询表的白名单。</p>
+
+<h2>11. 一个 Service 串起第一层和第二层</h2>
+<p>学习阶段先放在一个 Service 里最直观：</p>
+<pre><code>@Service
+public class SchemaAiService {
+
+    private final ChatClient chatClient;
+    private final TableCatalogService tableCatalogService;
+    private final DatabaseTools databaseTools;
+
+    public SchemaAiService(
+        ChatClient.Builder builder,
+        TableCatalogService tableCatalogService,
+        DatabaseTools databaseTools
+    ) {
+        this.chatClient = builder.build();
+        this.tableCatalogService = tableCatalogService;
+        this.databaseTools = databaseTools;
+    }
+
+    public String getSchema(String question) {
+
+        String systemPrompt = """
+            你负责根据用户问题选择数据库表，并读取对应表结构。
+
+            可用业务表：
+            %s
+
+            规则：
+            - 只能选择上述表
+            - 不能创造表名
+            - 无法判断时返回 UNKNOWN
+            - 确定表以后，必须调用 getTableSchema 工具读取真实表结构
+            - 不允许自行猜测字段名
+            """.formatted(tableCatalogService.getTables());
+
+        return chatClient.prompt()
+            .system(systemPrompt)
+            .user(question)
+            .tools(databaseTools)
+            .call()
+            .content();
+    }
+}</code></pre>
+
+<h2>12. 最关键的两句</h2>
+<pre><code>.system(systemPrompt)</code></pre>
+<p>这是 Context：把业务表目录和规则给 AI。</p>
+<pre><code>.tools(databaseTools)</code></pre>
+<p>这是 Tool：把 <code>getTableSchema()</code> 这种能力交给 AI。</p>
+
+<h2>13. 完整运行链路</h2>
+<pre><code>用户：查询中午时段的消费记录
+↓
+SchemaAiService
+↓
+Context 中看到 spend = 消费记录
+↓
+AI 判断需要 spend
+↓
+Tool Call：getTableSchema("spend")
+↓
+DatabaseTools
+↓
+SchemaService
+↓
+白名单检查
+↓
+SchemaMapper
+↓
+pg_catalog
+↓
+返回 created_at / amount / category ...
+↓
+AI 根据字段与注释理解：
+created_at 可以用于筛选中午时段</code></pre>
+
+<h2>14. 当前已经跑通的效果</h2>
+<p>AI 已经可以取得类似：</p>
+<pre><code>id          bigint                    主键
+created_at  timestamp with time zone  消费创建时间
+date        date                      消费日期
+category    bigint                    消费分类
+title       varchar                   消费标题/描述
+amount      real                      消费金额
+cashType    varchar                   支付方式/币种类型</code></pre>
+<p>并进一步理解：</p>
+<pre><code>“查询中午时段的消费记录”
+→ 可能使用 created_at
+→ 根据时间段进行筛选</code></pre>
+
+<h2>15. 为什么第二层暂时返回 String</h2>
+<p>第一层单纯选表时，可以使用：</p>
+<pre><code>.entity(TableSelection.class)</code></pre>
+<p>第二层加入 Tool 后，为了先观察整个工具调用过程，当前用：</p>
+<pre><code>.call()
+.content()</code></pre>
+<p>以后第三层需要继续给程序处理时，再定义 <code>SchemaResult</code>、<code>QueryPlan</code> 等结构化对象。</p>
+
+<h2>16. 当前还不能真正“追问”</h2>
+<p>AI 可能最后问：</p>
+<pre><code>是否需要我继续生成完整查询？</code></pre>
+<p>但目前每次 HTTP 请求都是新的 Prompt。下一次只发送：</p>
+<pre><code>继续</code></pre>
+<p>默认没有上一轮上下文。后面可以学习：</p>
+<pre><code>Spring AI ChatMemory
+conversationId
+多轮会话</code></pre>
+
+<h2>17. 第二层复习重点</h2>
+<ol><li>第一层通过 Context 选表。</li><li>第二层通过 <code>@Tool</code> 获取真实 Schema。</li><li>AI 不允许猜字段。</li><li>字段注释要尽量返回，帮助 AI 理解业务语义。</li><li><code>table-catalog.json</code> 可以同时作为表白名单。</li><li>Tool → Service → MyBatis Mapper → PostgreSQL。</li><li>当前重点是把 Schema Tool 链路跑稳定。</li></ol>
+<div class="key"><strong>当前完整链路：</strong> Context 选表 → Tool 读 Schema → MyBatis 查 pg_catalog → AI 理解真实字段。</div>
+
+<h2>18. 下一层预告</h2>
+<pre><code>AI 已经知道：
+spend 表
+created_at 字段
+amount 字段
+category 字段
+
+↓
+生成结构化 QueryPlan
+
+{
+  "table": "spend",
+  "filters": [
+    {
+      "field": "created_at",
+      "operator": "TIME_BETWEEN",
+      "from": "11:00",
+      "to": "13:00"
+    }
+  ]
+}
+
+↓
+Java 校验
+↓
+MyBatis 或 jOOQ 执行真实数据查询</code></pre>
+
+<h2>19. 项目内访问</h2>
+<p>建议把本文件放到：</p>
+<pre><code>src/main/resources/static/ai-schema-notes.html</code></pre>
+<p>启动后访问：</p>
+<pre><code>http://localhost:8080/ai-schema-notes.html</code></pre>
+</main></body></html>
