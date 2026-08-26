@@ -1,23 +1,24 @@
 package com.next.ai.service;
 
-import com.next.ai.mapper.SchemaMapper;
-import com.next.ai.vo.TableSchema;
+import com.next.ai.mapper.DBMetaMapper;
+import com.next.ai.vo.metaInfo.TableMetaInfo;
+
 import org.springframework.stereotype.Service;
 
 @Service
-public class SchemaService {
+public class DBMetaService {
 
-  private final SchemaMapper schemaMapper;
-  private final TableCatalogService tableCatalogService;
+  private final DBMetaMapper schemaMapper;
+  private final TableIntroService tableCatalogService;
 
-  public SchemaService(
-      SchemaMapper schemaMapper,
-      TableCatalogService tableCatalogService) {
+  public DBMetaService(
+      DBMetaMapper schemaMapper,
+      TableIntroService tableCatalogService) {
     this.schemaMapper = schemaMapper;
     this.tableCatalogService = tableCatalogService;
   }
 
-  public TableSchema getTableSchema(String tableName) {
+  public TableMetaInfo getTableSchema(String tableName) {
 
     boolean exists = tableCatalogService.getTables()
         .stream()
@@ -28,9 +29,9 @@ public class SchemaService {
           "不允许读取该表：" + tableName);
     }
 
-    var columns = schemaMapper.getColumns(tableName);
+    var columns = schemaMapper.getMeta(tableName);
 
-    return new TableSchema(
+    return new TableMetaInfo(
         tableName,
         columns);
   }

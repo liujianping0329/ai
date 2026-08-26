@@ -6,21 +6,21 @@ import org.springframework.stereotype.Service;
 import com.next.ai.tool.DatabaseTools;
 
 @Service
-public class SchemaAiService {
+public class AiService {
   private final ChatClient chatClient;
-  private final TableCatalogService tableCatalogService;
+  private final TableIntroService tableCatalogService;
   private final DatabaseTools databaseTools;
 
-  public SchemaAiService(
+  public AiService(
       ChatClient.Builder builder,
-      TableCatalogService tableCatalogService,
+      TableIntroService tableCatalogService,
       DatabaseTools databaseTools) {
     this.chatClient = builder.build();
     this.tableCatalogService = tableCatalogService;
     this.databaseTools = databaseTools;
   }
 
-  public String getSchema(String question) {
+  public String getData(String question) {
 
     String systemPrompt = """
         你负责根据用户问题选择数据库表，并读取对应表结构。

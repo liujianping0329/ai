@@ -6,21 +6,21 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import io.swagger.v3.oas.annotations.Operation;
 
-import com.next.ai.service.SchemaAiService;
+import com.next.ai.service.AiService;
 import io.swagger.v3.oas.annotations.Parameter;
 
 @RestController
 public class AiController {
 
   private final ChatClient chatClient;
-  private final SchemaAiService aiService;
+  private final AiService aiService;
 
-  public AiController(ChatClient.Builder builder, SchemaAiService aiService) {
+  public AiController(ChatClient.Builder builder, AiService aiService) {
     this.chatClient = builder.build();
     this.aiService = aiService;
   }
 
-  @GetMapping("/api/ai")
+  @GetMapping("/test")
   public String chat(
       @RequestParam(defaultValue = "你好") String message) {
 
@@ -31,10 +31,10 @@ public class AiController {
         .content();
   }
 
-  @Operation(summary = "根据用户问题选择数据库表并查结构", description = "根据自然语言问题，从配置的业务表目录中选择最合适的数据库表并获取其结构")
-  @GetMapping("/table")
-  public String findTable(
+  @Operation(summary = "问答", description = "根据自然语言问题，从库中查数据")
+  @GetMapping("/data")
+  public String findData(
       @Parameter(description = "用户的自然语言查询", example = "查询中午时段的消费记录") @RequestParam(name = "q", defaultValue = "查询中午时段的消费记录") String q) {
-    return aiService.getSchema(q);
+    return aiService.getData(q);
   }
 }

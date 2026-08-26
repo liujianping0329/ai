@@ -2,28 +2,30 @@ package com.next.ai.service;
 
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
-import com.next.ai.vo.TableMeta;
+
 import java.io.IOException;
 import java.util.List;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
+import com.next.ai.vo.intro.TableIntro;
+
 @Service
-public class TableCatalogService {
+public class TableIntroService {
 
-  private final List<TableMeta> tables;
+  private final List<TableIntro> tables;
 
-  public TableCatalogService(JsonMapper jsonMapper) throws IOException {
+  public TableIntroService(JsonMapper jsonMapper) throws IOException {
 
     var resource = new ClassPathResource("ai/table-catalog.json");
 
     this.tables = jsonMapper.readValue(
         resource.getInputStream(),
-        new TypeReference<List<TableMeta>>() {
+        new TypeReference<List<TableIntro>>() {
         });
   }
 
-  public List<TableMeta> getTables() {
+  public List<TableIntro> getTables() {
     return tables;
   }
 }

@@ -3,18 +3,19 @@ package com.next.ai.tool;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
-import com.next.ai.service.SchemaService;
-import com.next.ai.vo.TableSchema;
+import com.next.ai.service.DBMetaService;
+import com.next.ai.vo.metaInfo.TableMetaInfo;
+
 import org.springframework.stereotype.Component;
 
 @Component
 public class DatabaseTools {
 
-  private final SchemaService schemaService;
+  private final DBMetaService dbMetaService;
 
   public DatabaseTools(
-      SchemaService schemaService) {
-    this.schemaService = schemaService;
+      DBMetaService dbMetaService) {
+    this.dbMetaService = dbMetaService;
   }
 
   @Tool(description = """
@@ -23,7 +24,7 @@ public class DatabaseTools {
       必须使用此工具获取字段信息，
       不允许自行猜测字段名。
       """)
-  public TableSchema getTableSchema(@ToolParam(description = "数据库表名") String tableName) {
-    return schemaService.getTableSchema(tableName);
+  public TableMetaInfo getTableSchema(@ToolParam(description = "数据库表名") String tableName) {
+    return dbMetaService.getTableSchema(tableName);
   }
 }
