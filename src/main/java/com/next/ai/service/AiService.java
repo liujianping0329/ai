@@ -4,6 +4,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
 import com.next.ai.tool.DatabaseTools;
+import com.next.ai.vo.queryPlan.QueryPlan;
 
 @Service
 public class AiService {
@@ -20,20 +21,22 @@ public class AiService {
     this.databaseTools = databaseTools;
   }
 
-  public String getData(String question) {
+  public QueryPlan getData(String question) {
 
     String systemPrompt = """
-        你负责根据用户问题选择数据库表，并读取对应表结构。
+        你负责根据用户问题生成数据库查询计划。
 
-            可用业务表：
-            %s
+        可用业务表：
+        %s
 
-            规则：
-            - 只能选择上述表
-            - 不能创造表名
-            - 无法判断时返回 UNKNOWN
-            - 确定表以后，必须调用 getTableSchema 工具读取真实表结构
-            - 不允许自行猜测字段名
+        规则：
+        - 只能使用给出的业务表
+        - 必须先调用 getTableSchema 获取真实字段
+        - 不允许创造不存在的字段
+        - 只允许查询，不允许 INSERT、UPDATE、DELETE
+        - limit 最大为 100
+        - operator 只能使用：
+          EQ, GT, GTE, LT, LTE, BETWEEN, TIME_BETWEEN, LIKE
         """.formatted(tableCatalogService.getTables());
 
     return chatClient.prompt()
@@ -41,6 +44,6 @@ public class AiService {
         .user(question)
         .tools(databaseTools)
         .call()
-        .content();
+        .entity(QueryPlan.class);
   }
 }

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 项目代码整理总结 - cda23b1</title>
+<style>
+body{margin:0;background:#f6f7f9;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.75}
+main{max-width:980px;margin:auto;padding:32px 20px 64px}
+h1{margin:0 0 8px;font-size:32px} h2{margin-top:38px;padding-bottom:8px;border-bottom:1px solid #e5e7eb}
+.muted{color:#6b7280}.card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px 20px;margin:16px 0}
+.key{border-left:4px solid #2563eb;padding:10px 0 10px 14px;margin:18px 0;background:#fff}
+pre{background:#111827;color:#f9fafb;padding:16px;border-radius:10px;overflow:auto;line-height:1.55}
+code{font-family:Consolas,Monaco,monospace}:not(pre)>code{background:#eef0f3;padding:2px 6px;border-radius:5px}
+table{width:100%;border-collapse:collapse;background:#fff;margin:16px 0} th,td{border:1px solid #e5e7eb;padding:10px 12px;text-align:left;vertical-align:top} th{background:#f3f4f6}
+</style>
+</head>
+<body><main>
+<h1>AI 项目代码整理总结</h1>
+<div class="muted">Commit：cda23b1 · “整理代码”</div>
+
+<div class="key"><strong>这次重构的核心：</strong>不是单纯改名，而是把“业务表简介”和“数据库真实元数据”两层彻底区分开，让整个 AI 查库流程的职责更清楚。</div>
+
+<h2>1. 整理后的整体链路</h2>
+<pre><code>用户自然语言问题
+        ↓
+AiService
+        ↓
+TableIntroService
+读取业务表简介，辅助 AI 选表
+        ↓
+AI 判断目标表
+        ↓
+DatabaseTools
+        ↓
+DBMetaService
+        ↓
+DBMetaMapper
+读取 PostgreSQL 真实元数据
+        ↓
+字段名 / 类型 / Nullable / 注释
+        ↓
+继续进入 QueryPlan 和真实数据查询</code></pre>
+
+<h2>2. 最大的概念整理：Intro 与 MetaInfo 分离</h2>
+<table>
+<tr><th>层</th><th>现在的命名</th><th>职责</th></tr>
+<tr><td>业务语义层</td><td><code>TableIntro</code> / <code>TableIntroService</code></td><td>告诉 AI 每张表是做什么的，用于第一层选表</td></tr>
+<tr><td>数据库元数据层</td><td><code>TableMetaInfo</code> / <code>ColumnMeta</code> / <code>DBMetaService</code></td><td>读取数据库实际存在的字段、类型、Nullable、注释</td></tr>
+</table>
+
+<p>原来的 <code>TableMeta</code> 容易同时让人想到“表介绍”和“数据库 metadata”。现在拆成 <code>TableIntro</code> 与 <code>TableMetaInfo</code> 后，语义明显清晰。</p>
+
+<h2>3. Service 命名变得更符合长期职责</h2>
+<div class="card"><strong>SchemaAiService → AiService</strong><br>原名只强调 Schema，但实际已经是整个 AI 数据问答入口。改成 <code>AiService</code> 后，可以自然继续承接 QueryPlan、数据执行、结果整理。</div>
+<div class="card"><strong>SchemaService → DBMetaService</strong><br>明确表示这一层专门处理数据库元数据，而不是泛泛的 Schema 业务。</div>
+<div class="card"><strong>TableCatalogService → TableIntroService</strong><br>强调 JSON 中保存的是给 AI 理解业务用的“表简介”，而不是数据库真实结构。</div>
+
+<h2>4. Mapper 职责变清楚</h2>
+<p><code>SchemaMapper</code> 改成 <code>DBMetaMapper</code>，并通过 PostgreSQL <code>pg_catalog</code> 读取：</p>
+<ul>
+<li>字段名</li><li>字段类型</li><li>是否可空</li><li>字段注释</li>
+</ul>
+<pre><code>DBMetaService
+    ↓
+DBMetaMapper
+    ↓
+pg_catalog
+    ↓
+数据库真实元数据</code></pre>
+
+<h2>5. VO 开始按职责分包</h2>
+<p>整理前多个对象平铺在 <code>vo</code> 下；整理后按概念分成：</p>
+<pre><code>vo/
+├─ intro/
+│  ├─ TableIntro
+│  └─ TableSelection
+│
+└─ metaInfo/
+   ├─ ColumnMeta
+   └─ TableMetaInfo</code></pre>
+<p>这样一眼就能看出：<code>intro</code> 是第一层业务理解，<code>metaInfo</code> 是第二层真实数据库结构。</p>
+
+<h2>6. DatabaseTools 的边界更干净</h2>
+<pre><code>AI
+ ↓
+@Tool getTableSchema(tableName)
+ ↓
+DatabaseTools
+ ↓
+DBMetaService
+ ↓
+DBMetaMapper
+ ↓
+PostgreSQL</code></pre>
+<p>Tool 本身不负责 SQL，也不负责复杂业务逻辑，只负责把能力暴露给 AI，再交给 Service 执行。</p>
+
+<h2>7. Controller 从“步骤测试”向“最终问答”靠拢</h2>
+<p>接口从 <code>/table</code>、<code>findTable()</code>、<code>getSchema()</code> 调整为 <code>/data</code>、<code>findData()</code>、<code>getData()</code>。</p>
+<p>这说明代码视角已经从“我正在测试选表/Schema”转向最终目标：</p>
+<pre><code>自然语言
+→ 找表
+→ 查 Meta
+→ 生成查询计划
+→ 查询数据
+→ 返回答案</code></pre>
+
+<h2>8. 整理前后对比</h2>
+<table>
+<tr><th>整理前</th><th>整理后</th></tr>
+<tr><td>Schema / Meta / Catalog 概念有些混</td><td>Intro 与 DB Meta 明确分离</td></tr>
+<tr><td>Service 名称偏当前实现步骤</td><td>Service 名称表达长期职责</td></tr>
+<tr><td>VO 全部平铺</td><td>按 intro / metaInfo 分类</td></tr>
+<tr><td>接口看起来是 Schema Demo</td><td>接口开始面向最终自然语言查数据</td></tr>
+<tr><td>SchemaMapper 含义较泛</td><td>DBMetaMapper 明确只负责数据库元数据</td></tr>
+</table>
+
+<h2>9. 整理后可以这样记项目</h2>
+<pre><code>AiController
+    ↓
+AiService
+    │
+    ├─ TableIntroService
+    │      ↓
+    │   table-catalog.json
+    │      ↓
+    │   第一层：业务语义 / 选表
+    │
+    └─ DatabaseTools
+           ↓
+       DBMetaService
+           ↓
+       DBMetaMapper
+           ↓
+       PostgreSQL pg_catalog
+           ↓
+       第二层：真实表结构</code></pre>
+
+<h2>10. 这次重构的真正价值</h2>
+<p>本质上是在给 AI 数据查询流程建立清晰的领域概念：</p>
+<ol>
+<li><strong>Table Intro</strong>：为什么 AI 应该选择这张表。</li>
+<li><strong>DB Meta Info</strong>：这张表实际上有什么字段。</li>
+<li><strong>Database Tool</strong>：AI 如何按需获取数据库真实信息。</li>
+<li><strong>AiService</strong>：把这些阶段串成完整问答流程。</li>
+</ol>
+
+<div class="key"><strong>一句话总结：</strong>这次重构把代码从“按当前实现步骤命名”，调整成了“按 AI 查库流程和数据职责命名”，所以第三层继续接 <code>QueryPlan</code> 会自然很多。</div>
+
+<h2>11. 后续自然演进方向</h2>
+<pre><code>TableIntro
+   ↓
+TableMetaInfo
+   ↓
+QueryPlan
+   ↓
+Validator
+   ↓
+MyBatis / jOOQ
+   ↓
+真实数据
+   ↓
+AI 整理结果</code></pre>
+
+<h2>12. Commit 信息</h2>
+<ul>
+<li>Commit：<code>cda23b15724c7b6fdcd0a2ad83b52fd401f943b5</code></li>
+<li>提交说明：<code>整理代码</code></li>
+<li>15 files changed</li>
+<li>109 additions / 104 deletions</li>
+</ul>
+
+<h2>13. 项目内访问</h2>
+<p>建议放到：</p>
+<pre><code>src/main/resources/static/ai-refactor-cda23b1.html</code></pre>
+<p>启动后访问：</p>
+<pre><code>http://localhost:8080/ai-refactor-cda23b1.html</code></pre>
+
+</main></body></html>
