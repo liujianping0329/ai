@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spring AI 第三层：QueryPlan 复习资料</title>
+<style>
+body{margin:0;background:#f7f8fa;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.75}
+main{max-width:980px;margin:auto;padding:32px 20px 64px}
+h1{margin:0 0 8px;font-size:32px} h2{margin-top:38px;padding-bottom:8px;border-bottom:1px solid #e5e7eb} h3{margin-top:24px}
+.muted{color:#6b7280}.card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px 20px;margin:16px 0}
+.key{border-left:4px solid #2563eb;padding:10px 0 10px 14px;margin:18px 0;background:#fff}
+pre{background:#111827;color:#f9fafb;padding:16px;border-radius:10px;overflow:auto;line-height:1.55}
+code{font-family:Consolas,Monaco,monospace}:not(pre)>code{background:#eef0f3;padding:2px 6px;border-radius:5px}
+table{width:100%;border-collapse:collapse;background:#fff;margin:16px 0} th,td{border:1px solid #e5e7eb;padding:10px 12px;text-align:left;vertical-align:top} th{background:#f3f4f6}
+ul,ol{padding-left:24px}
+</style>
+</head>
+<body><main>
+
+<h1>Spring AI 第三层：QueryPlan 复习资料</h1>
+<div class="muted">Commit：68fd196 · “生成queryplan”</div>
+
+<div class="key">
+<strong>这次提交的核心：</strong>把前两层“选表 + 查真实 Schema”继续推进一步，开始让 AI 输出结构化的 <code>QueryPlan</code>，也就是把自然语言转换成“可被程序验证和执行的查询计划”。
+</div>
+
+<h2>1. 当前三层架构</h2>
+<pre><code>第一层
+用户自然语言
+→ 根据 TableIntro 选表
+
+第二层
+AI 调用 getTableSchema
+→ 读取真实字段 / 类型 / 注释
+
+第三层
+用户问题 + 真实 Schema
+→ 生成 QueryPlan
+→ 后续交给 Validator / SQL 执行层</code></pre>
+
+<p>这次提交正式把第三层落到代码中。GitHub diff 显示新增了 <code>QueryPlan</code>、<code>QueryFilter</code>，并让 Controller 和 AiService 都改为返回结构化 QueryPlan。 </p>
+
+<h2>2. QueryPlan 是什么</h2>
+
+<p><code>QueryPlan</code> 不是 SQL，而是 AI 对“应该怎么查”的结构化描述。</p>
+
+<pre><code>public record QueryPlan(
+    String table,
+    List&lt;String&gt; select,
+    List&lt;QueryFilter&gt; filters,
+    String orderBy,
+    String direction,
+    Integer limit
+) {
+}</code></pre>
+
+<p>每个字段的意义：</p>
+
+<table>
+<tr><th>字段</th><th>作用</th></tr>
+<tr><td><code>table</code></td><td>目标表</td></tr>
+<tr><td><code>select</code></td><td>要返回哪些字段</td></tr>
+<tr><td><code>filters</code></td><td>WHERE 条件</td></tr>
+<tr><td><code>orderBy</code></td><td>排序字段</td></tr>
+<tr><td><code>direction</code></td><td>ASC / DESC</td></tr>
+<tr><td><code>limit</code></td><td>最大返回条数</td></tr>
+</table>
+
+<h2>3. QueryFilter</h2>
+
+<pre><code>public record QueryFilter(
+    String field,
+    String operator,
+    String value1,
+    String value2
+) {
+}</code></pre>
+
+<p>它表示单个查询条件，例如：</p>
+
+<pre><code>{
+  "field": "created_at",
+  "operator": "TIME_BETWEEN",
+  "value1": "11:00",
+  "value2": "13:00"
+}</code></pre>
+
+<p>对应用户表达：</p>
+
+<pre><code>查询中午时段的消费记录</code></pre>
+
+<h2>4. 为什么不直接让 AI 生成 SQL</h2>
+
+<p>这次设计最重要的一点是：</p>
+
+<div class="key">
+<strong>AI 只负责生成“查询计划”，不直接决定最终 SQL。</strong>
+</div>
+
+<p>如果直接让模型生成：</p>
+
+<pre><code>SELECT ...
+FROM ...
+WHERE ...</code></pre>
+
+<p>程序很难系统性检查它是否：</p>
+
+<ul>
+<li>用了不存在的表</li>
+<li>用了不存在的字段</li>
+<li>执行了 UPDATE / DELETE</li>
+<li>返回过多数据</li>
+<li>拼出了危险 SQL</li>
+</ul>
+
+<p>而 QueryPlan 可以先被 Java 校验：</p>
+
+<pre><code>AI
+ ↓
+QueryPlan
+ ↓
+Validator
+ ↓
+合法才允许继续
+ ↓
+MyBatis / jOOQ
+ ↓
+真实 SQL</code></pre>
+
+<h2>5. AiService 的变化</h2>
+
+<p>之前 <code>getData()</code> 返回：</p>
+
+<pre><code>String</code></pre>
+
+<p>现在改为：</p>
+
+<pre><code>QueryPlan</code></pre>
+
+<p>核心变化：</p>
+
+<pre><code>public QueryPlan getData(String question)</code></pre>
+
+<p>System Prompt 也从“选择表并读取结构”，进一步升级成：</p>
+
+<pre><code>你负责根据用户问题生成数据库查询计划。</code></pre>
+
+<h2>6. Prompt 中新增的约束</h2>
+
+<pre><code>规则：
+- 只能使用给出的业务表
+- 必须先调用 getTableSchema 获取真实字段
+- 不允许创造不存在的字段
+- 只允许查询，不允许 INSERT、UPDATE、DELETE
+- limit 最大为 100
+- operator 只能使用：
+  EQ, GT, GTE, LT, LTE, BETWEEN, TIME_BETWEEN, LIKE</code></pre>
+
+<p>这几个规则分别在解决：</p>
+
+<table>
+<tr><th>规则</th><th>目的</th></tr>
+<tr><td>只能使用给出的业务表</td><td>限制表范围</td></tr>
+<tr><td>必须先调用 getTableSchema</td><td>强制基于真实 Schema</td></tr>
+<tr><td>不能创造字段</td><td>防止 AI 猜字段</td></tr>
+<tr><td>只允许查询</td><td>禁止写操作</td></tr>
+<tr><td>limit ≤ 100</td><td>防止一次返回太多数据</td></tr>
+<tr><td>限定 operator</td><td>让后续执行层可以枚举和验证</td></tr>
+</table>
+
+<h2>7. 最关键的变化：content() → entity()</h2>
+
+<p>第二层主要为了观察 Tool 结果，所以之前：</p>
+
+<pre><code>.call()
+.content()</code></pre>
+
+<p>第三层改为：</p>
+
+<pre><code>.call()
+.entity(QueryPlan.class)</code></pre>
+
+<p>意义是：</p>
+
+<pre><code>LLM 返回结构化结果
+        ↓
+Spring AI 自动转换
+        ↓
+QueryPlan Java 对象</code></pre>
+
+<p>程序后面可以直接：</p>
+
+<pre><code>plan.table();
+plan.select();
+plan.filters();
+plan.limit();</code></pre>
+
+<p>这一步非常重要，因为系统开始从“AI 返回文字”走向“AI 返回程序可以继续处理的数据”。</p>
+
+<h2>8. Tool 仍然保留</h2>
+
+<p>虽然最终输出变成 QueryPlan，但第二层 Tool 没有消失：</p>
+
+<pre><code>chatClient.prompt()
+    .system(systemPrompt)
+    .user(question)
+    .tools(databaseTools)
+    .call()
+    .entity(QueryPlan.class);</code></pre>
+
+<p>所以完整流程仍然是：</p>
+
+<pre><code>用户：
+查询中午时段的消费记录
+
+↓ AI 根据 TableIntro 选表
+
+spend
+
+↓ Tool Call
+
+getTableSchema("spend")
+
+↓ 返回真实 Schema
+
+created_at
+amount
+title
+category
+...
+
+↓ AI 生成 QueryPlan
+
+{
+  table: "spend",
+  select: [...],
+  filters: [...],
+  orderBy: ...,
+  direction: ...,
+  limit: ...
+}</code></pre>
+
+<h2>9. Controller 也变成结构化返回</h2>
+
+<p>原来 Controller：</p>
+
+<pre><code>public String findData(...)</code></pre>
+
+<p>现在：</p>
+
+<pre><code>public QueryPlan findData(...)</code></pre>
+
+<p>这意味着 Swagger 中可以直接看到结构化 JSON，而不是 AI 的说明文字。</p>
+
+<p>对于调试第三层非常方便，可以直接检查：</p>
+
+<ul>
+<li>table 是否选对</li>
+<li>select 是否合理</li>
+<li>filter 是否正确</li>
+<li>operator 是否符合约定</li>
+<li>limit 是否合理</li>
+</ul>
+
+<h2>10. 一个典型 QueryPlan</h2>
+
+<pre><code>{
+  "table": "spend",
+  "select": [
+    "id",
+    "title",
+    "amount",
+    "created_at"
+  ],
+  "filters": [
+    {
+      "field": "created_at",
+      "operator": "TIME_BETWEEN",
+      "value1": "11:00",
+      "value2": "13:00"
+    }
+  ],
+  "orderBy": "created_at",
+  "direction": "ASC",
+  "limit": 100
+}</code></pre>
+
+<h2>11. operator 为什么要自己定义</h2>
+
+<p>目前定义：</p>
+
+<pre><code>EQ
+GT
+GTE
+LT
+LTE
+BETWEEN
+TIME_BETWEEN
+LIKE</code></pre>
+
+<p>这些不是 SQL 原文，而是系统内部的“查询操作符协议”。</p>
+
+<p>后面 Java 可以安全映射：</p>
+
+<pre><code>EQ           → =
+GT           → &gt;
+GTE          → &gt;=
+LT           → &lt;
+LTE          → &lt;=
+BETWEEN      → BETWEEN
+TIME_BETWEEN → 时间范围
+LIKE         → LIKE</code></pre>
+
+<p>这样就不会让 AI 自己传：</p>
+
+<pre><code>operator = "whatever sql fragment..."</code></pre>
+
+<h2>12. 这次提交标志着什么</h2>
+
+<div class="card">
+<p>第一层解决：<strong>“查哪张表？”</strong></p>
+<p>第二层解决：<strong>“这张表真实有哪些字段？”</strong></p>
+<p>第三层开始解决：<strong>“具体应该怎么查？”</strong></p>
+</div>
+
+<p>系统已经从普通 ChatBot 开始变成一个真正的数据库 Agent 流程：</p>
+
+<pre><code>自然语言
+ ↓
+业务语义
+ ↓
+真实数据库结构
+ ↓
+结构化查询计划
+ ↓
+安全校验
+ ↓
+SQL 执行</code></pre>
+
+<h2>13. 当前还没有做的事情</h2>
+
+<p>这个 Commit 只生成 QueryPlan，还没有真正执行数据库查询。</p>
+
+<p>下一步应该是：</p>
+
+<pre><code>QueryPlan
+ ↓
+QueryPlanValidator
+ ↓
+检查：
+- table 是否在白名单
+- select 字段是否存在
+- filter field 是否存在
+- operator 是否允许
+- direction 是否 ASC/DESC
+- limit 是否 ≤ 100
+
+ ↓
+SQL Builder / jOOQ / MyBatis
+ ↓
+真实数据</code></pre>
+
+<div class="key">
+<strong>第三层的结果不是“最终答案”，而是第四层执行查询的输入。</strong>
+</div>
+
+<h2>14. 为什么 Validator 不能省</h2>
+
+<p>即使 Prompt 已经写：</p>
+
+<pre><code>不允许创造字段
+limit 最大为100</code></pre>
+
+<p>也不能完全相信 AI。</p>
+
+<p>Prompt 是“告诉模型应该怎么做”；Validator 才是“程序强制保证只能这么做”。</p>
+
+<pre><code>Prompt
+→ 软约束
+
+Java Validator
+→ 硬约束</code></pre>
+
+<p>这是后面 AI 数据查询安全性的核心。</p>
+
+<h2>15. 现在项目的结构思路</h2>
+
+<pre><code>AiController
+    ↓
+AiService
+    │
+    ├─ TableIntroService
+    │      ↓
+    │   第一层：选表
+    │
+    ├─ DatabaseTools
+    │      ↓
+    │   DBMetaService
+    │      ↓
+    │   第二层：真实 Schema
+    │
+    └─ QueryPlan
+           ↓
+       第三层：查询计划</code></pre>
+
+<h2>16. 本次 Commit 的主要代码变化</h2>
+
+<ul>
+<li>新增 <code>vo/queryPlan/QueryPlan.java</code></li>
+<li>新增 <code>vo/queryPlan/QueryFilter.java</code></li>
+<li><code>AiService.getData()</code> 从 <code>String</code> 改成 <code>QueryPlan</code></li>
+<li>Prompt 增加只读、字段真实性、limit、operator 等规则</li>
+<li><code>.content()</code> 改为 <code>.entity(QueryPlan.class)</code></li>
+<li><code>AiController.findData()</code> 改为直接返回 <code>QueryPlan</code></li>
+<li>新增上一阶段代码整理复习 HTML</li>
+</ul>
+
+<h2>17. 一句话复习</h2>
+
+<div class="key">
+<strong>第三层的核心就是：让 AI 不再返回“说明文字”，而是基于真实 Schema 输出一个受约束的 QueryPlan，作为后续 Java 校验和 SQL 执行的中间协议。</strong>
+</div>
+
+<h2>18. Commit 信息</h2>
+
+<ul>
+<li>Commit：<code>68fd19683f31f0b13f96fa7449319c5799613f2f</code></li>
+<li>提交说明：<code>生成queryplan</code></li>
+<li>5 files changed</li>
+<li>217 additions / 14 deletions</li>
+</ul>
+
+<h2>19. 项目内访问</h2>
+
+<p>建议文件名：</p>
+
+<pre><code>src/main/resources/static/ai-queryplan-notes.html</code></pre>
+
+<p>Spring Boot 启动后访问：</p>
+
+<pre><code>http://localhost:8080/ai-queryplan-notes.html</code></pre>
+
+</main></body>
+</html>

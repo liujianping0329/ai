@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.next.ai.mapper.QueryDataMapper">
+    <select id="query" resultType="map">
+      SELECT
+      <foreach collection="select" item="field" separator=",">
+          ${field}
+      </foreach>
+      FROM ${table}
+      <where>
+          <foreach collection="filters" item="f">
+              <choose>
+                  <when test='f.operator == "EQ"'>
+                      AND ${f.field} = #{f.value1}
+                  </when>
+                  <when test='f.operator == "LIKE"'>
+                      AND ${f.field} LIKE CONCAT('%', #{f.value1}, '%')
+                  </when>
+                  <when test='f.operator == "TIME_BETWEEN"'>
+                      AND ${f.field}::time
+                      BETWEEN CAST(#{f.value1} AS time)
+                      AND CAST(#{f.value2} AS time)
+                  </when>
+              </choose>
+          </foreach>
+      </where>
+      <if test="orderBy != null and orderBy != ''">
+          ORDER BY ${orderBy}
+          <choose>
+              <when test='direction == "DESC"'>
+                  DESC
+              </when>
+              <otherwise>
+                  ASC
+              </otherwise>
+          </choose>
+      </if>
+      LIMIT #{limit}
+    </select>
+
+</mapper>

@@ -7,15 +7,21 @@ import com.next.ai.service.DBMetaService;
 import com.next.ai.vo.metaInfo.TableMetaInfo;
 
 import org.springframework.stereotype.Component;
+import com.next.ai.service.QueryDataService;
+import com.next.ai.vo.queryPlan.QueryPlan;
+import java.util.List;
+import java.util.Map;
 
 @Component
 public class DatabaseTools {
 
   private final DBMetaService dbMetaService;
+  private final QueryDataService queryDataService;
 
   public DatabaseTools(
-      DBMetaService dbMetaService) {
+      DBMetaService dbMetaService, QueryDataService queryDataService) {
     this.dbMetaService = dbMetaService;
+    this.queryDataService = queryDataService;
   }
 
   @Tool(description = """
@@ -26,5 +32,10 @@ public class DatabaseTools {
       """)
   public TableMetaInfo getTableSchema(@ToolParam(description = "数据库表名") String tableName) {
     return dbMetaService.getTableSchema(tableName);
+  }
+
+  @Tool(description = "根据已经生成并校验的查询计划查询业务数据")
+  public List<Map<String, Object>> queryData(QueryPlan plan) {
+    return queryDataService.execute(plan);
   }
 }
