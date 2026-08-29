@@ -35,7 +35,7 @@ public class AiController {
   @Operation(summary = "问答", description = "根据自然语言问题，从库中查数据")
   @GetMapping("/data")
   public AiResponse findData(
-      @Parameter(description = "用户的自然语言查询", example = "查询中午时段的消费记录") @RequestParam(name = "q", defaultValue = "查询中午时段的消费记录") String q) {
-    return aiService.getData(q);
+      @Parameter(description = "用户的自然语言查询", example = "查询中午时段的消费记录") @RequestParam(name = "question", defaultValue = "查询中午时段的消费记录") String question) {
+    return aiService.getData(question);
   }
 }

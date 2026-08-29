@@ -1,0 +1,35 @@
+package com.next.ai.filter;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+import java.io.IOException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+
+@Component
+public class RequestLogFilter extends OncePerRequestFilter {
+
+  @Override
+  protected void doFilterInternal(
+      HttpServletRequest request,
+      HttpServletResponse response,
+      FilterChain filterChain) throws ServletException, IOException {
+
+    String query = request.getQueryString();
+
+    if (query != null) {
+      query = URLDecoder.decode(query, StandardCharsets.UTF_8);
+    }
+
+    System.out.println(
+        request.getMethod() + " " +
+            request.getRequestURI() +
+            (query == null ? "" : "?" + query));
+
+    filterChain.doFilter(request, response);
+  }
+}
