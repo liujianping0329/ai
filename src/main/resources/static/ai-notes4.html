@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spring AI 第五层：Tool 执行真实查询复习资料</title>
+<style>
+body{margin:0;background:#f7f8fa;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.75}
+main{max-width:980px;margin:auto;padding:32px 20px 64px}
+h1{margin:0 0 8px;font-size:32px} h2{margin-top:38px;padding-bottom:8px;border-bottom:1px solid #e5e7eb} h3{margin-top:24px}
+.muted{color:#6b7280}.card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px 20px;margin:16px 0}
+.key{border-left:4px solid #2563eb;padding:10px 0 10px 14px;margin:18px 0;background:#fff}
+pre{background:#111827;color:#f9fafb;padding:16px;border-radius:10px;overflow:auto;line-height:1.55}
+code{font-family:Consolas,Monaco,monospace}:not(pre)>code{background:#eef0f3;padding:2px 6px;border-radius:5px}
+table{width:100%;border-collapse:collapse;background:#fff;margin:16px 0} th,td{border:1px solid #e5e7eb;padding:10px 12px;text-align:left;vertical-align:top} th{background:#f3f4f6}
+ul,ol{padding-left:24px}
+</style>
+</head>
+<body><main>
+
+<h1>Spring AI 第五层：Tool 执行真实查询</h1>
+<div class="muted">Commit：d5c2b42 · “日志，把记录查出来”</div>
+
+<div class="key"><strong>核心：</strong>项目从“只生成 QueryPlan”推进到“AI 调用 queryData Tool，MyBatis 真正查询 PostgreSQL，并直接返回最终答案”。同时加入 Spring AI 调试日志与 Mapper XML 配置。</div>
+
+<h2>1. 主线变化</h2>
+<pre><code>之前：
+用户问题
+→ 选表
+→ getTableSchema Tool
+→ QueryPlan
+→ 返回 QueryPlan
+
+现在：
+用户问题
+→ AI 选表
+→ getTableSchema Tool
+→ AI 生成 QueryPlan
+→ queryData Tool
+→ QueryDataService
+→ QueryDataMapper
+→ MyBatis XML
+→ PostgreSQL
+→ Tool Result
+→ AI 根据真实数据直接回答</code></pre>
+
+<h2>2. AiService 从“规划器”升级为完整数据库助手</h2>
+<p>返回值从：</p>
+<pre><code>public QueryPlan getData(String question)</code></pre>
+<p>改成：</p>
+<pre><code>public String getData(String question)</code></pre>
+<p>最后也从：</p>
+<pre><code>.entity(QueryPlan.class)</code></pre>
+<p>改成：</p>
+<pre><code>.content()</code></pre>
+<p>因为 QueryPlan 不再是最终结果，而是 AI 内部进入真实查询前的中间计划。</p>
+
+<h2>3. Prompt 开始要求完整执行</h2>
+<pre><code>执行步骤：
+1. 根据用户问题选择最合适的业务表
+2. 必须先调用 getTableSchema 获取真实字段结构
+3. 根据真实字段生成查询计划
+4. 必须调用 queryData 工具执行查询
+5. 只能根据 queryData 返回的真实数据回答用户
+6. 不允许自行猜测数据库中不存在的数据</code></pre>
+
+<h2>4. DatabaseTools 新增 queryData</h2>
+<pre><code>@Tool(description = "根据已经生成并校验的查询计划查询业务数据")
+public List&lt;Map&lt;String, Object&gt;&gt; queryData(QueryPlan plan) {
+    return queryDataService.execute(plan);
+}</code></pre>
+
+<p>现在 Tool 分成两类：</p>
+<ul>
+<li><code>getTableSchema()</code>：读取真实数据库元数据</li>
+<li><code>queryData()</code>：根据 QueryPlan 查询真实业务数据</li>
+</ul>
+
+<h2>5. 新增 QueryDataService</h2>
+<pre><code>@Service
+public class QueryDataService {
+
+    private final QueryDataMapper queryDataMapper;
+
+    public QueryDataService(QueryDataMapper queryDataMapper) {
+        this.queryDataMapper = queryDataMapper;
+    }
+
+    public List&lt;Map&lt;String, Object&gt;&gt; execute(QueryPlan plan) {
+        return queryDataMapper.query(plan);
+    }
+}</code></pre>
+
+<p>职责：接收 QueryPlan → 调 Mapper → 返回动态查询结果。</p>
+
+<h2>6. 为什么返回 List&lt;Map&lt;String,Object&gt;&gt;</h2>
+<p>AI 查询字段是动态的，因此固定 DTO 不合适：</p>
+<pre><code>这次：
+id, title, amount
+
+下次：
+category, created_at</code></pre>
+<p>所以：</p>
+<pre><code>List&lt;Map&lt;String, Object&gt;&gt;</code></pre>
+<p>很适合动态结果集。</p>
+
+<h2>7. QueryDataMapper</h2>
+<pre><code>@Mapper
+public interface QueryDataMapper {
+    List&lt;Map&lt;String, Object&gt;&gt; query(QueryPlan plan);
+}</code></pre>
+
+<p>Mapper 接口只保留方法定义，真正动态 SQL 放到 XML。</p>
+
+<h2>8. MyBatis XML 动态 SQL</h2>
+<p>新增：</p>
+<pre><code>src/main/resources/mapper/QueryDataMapper.xml</code></pre>
+
+<p>QueryPlan 到 SQL 的映射：</p>
+<table>
+<tr><th>QueryPlan</th><th>SQL</th></tr>
+<tr><td>table</td><td>FROM</td></tr>
+<tr><td>select</td><td>SELECT</td></tr>
+<tr><td>filters</td><td>WHERE</td></tr>
+<tr><td>orderBy / direction</td><td>ORDER BY</td></tr>
+<tr><td>limit</td><td>LIMIT</td></tr>
+</table>
+
+<h2>9. ${} 和 #{} 的区别</h2>
+<table>
+<tr><th>写法</th><th>含义</th><th>注意</th></tr>
+<tr><td><code>${table}</code></td><td>直接字符串替换</td><td>必须经过白名单</td></tr>
+<tr><td><code>${field}</code></td><td>动态字段名</td><td>必须经过白名单</td></tr>
+<tr><td><code>#{value1}</code></td><td>参数绑定</td><td>相对安全</td></tr>
+<tr><td><code>#{limit}</code></td><td>参数绑定</td><td>相对安全</td></tr>
+</table>
+
+<div class="key">MyBatis 可以完成 AI 动态查询，但动态表名和字段名无法通过 <code>#{}</code> 参数化，所以 Validator 是硬安全边界。</div>
+
+<h2>10. mapper-locations 配置</h2>
+<pre><code>mybatis.mapper-locations=classpath*:mapper/**/*.xml</code></pre>
+<p>因为 XML 放在独立的 <code>resources/mapper/</code> 下，显式配置更清楚，也更符合常见工程写法。</p>
+
+<h2>11. Invalid bound statement 的含义</h2>
+<pre><code>Invalid bound statement (not found):
+com.next.ai.mapper.QueryDataMapper.query</code></pre>
+<p>表示 Mapper 接口已经找到，但对应 XML statement 没有被加载或绑定成功。</p>
+
+<p>需要确认：</p>
+<pre><code>Java Mapper：
+com.next.ai.mapper.QueryDataMapper
+
+XML namespace：
+com.next.ai.mapper.QueryDataMapper
+
+Java 方法：
+query()
+
+XML：
+&lt;select id="query"&gt;</code></pre>
+
+<h2>12. Controller 改为最终 String</h2>
+<p>原来：</p>
+<pre><code>public QueryPlan findData(...)</code></pre>
+<p>现在：</p>
+<pre><code>public String findData(...)</code></pre>
+<p>Swagger 里直接看到最终数据库问答结果。</p>
+
+<h2>13. Spring AI 调试日志</h2>
+<pre><code>logging.level.org.springframework.ai=DEBUG
+logging.level.org.springframework.ai.chat.client.advisor=DEBUG
+
+spring.ai.chat.client.observations.log-prompt=true
+spring.ai.chat.client.observations.log-completion=true
+
+spring.ai.tools.observations.include-content=true</code></pre>
+
+<p>同时加入：</p>
+<pre><code>.advisors(new SimpleLoggerAdvisor())</code></pre>
+
+<p>用于观察：</p>
+<pre><code>用户问题
+→ Prompt
+→ Tool Call
+→ Tool 参数
+→ Tool Result
+→ 最终回答</code></pre>
+
+<h2>14. 当前 Tool 调用链</h2>
+<pre><code>ChatClient
+    ↓
+DatabaseTools
+    ├─ getTableSchema()
+    │      ↓
+    │   DBMetaService
+    │      ↓
+    │   DBMetaMapper
+    │
+    └─ queryData()
+           ↓
+       QueryDataService
+           ↓
+       QueryDataMapper
+           ↓
+       MyBatis XML
+           ↓
+       PostgreSQL</code></pre>
+
+<h2>15. 当前完整主线</h2>
+<pre><code>1. TableIntro
+   AI 理解有哪些业务表
+
+2. DBMeta Tool
+   getTableSchema()
+
+3. QueryPlan
+   AI 形成结构化查询计划
+
+4. Validate
+   查询计划安全校验
+
+5. QueryData Tool
+   queryData(QueryPlan)
+
+6. MyBatis
+   动态生成 SQL
+
+7. PostgreSQL
+   返回真实记录
+
+8. AI Final Answer
+   根据 Tool Result 直接回答用户</code></pre>
+
+<h2>16. 当前仍需补强：Validator</h2>
+<p>现在 <code>queryData()</code> 已经真正执行动态 SQL，因此后续应确保：</p>
+<pre><code>@Tool
+public List&lt;Map&lt;String,Object&gt;&gt; queryData(QueryPlan plan) {
+
+    queryPlanValidator.validate(plan);
+
+    return queryDataService.execute(plan);
+}</code></pre>
+
+<p>至少验证：</p>
+<ul>
+<li>table 在允许列表</li>
+<li>select / filter / orderBy 字段真实存在</li>
+<li>operator 在允许列表</li>
+<li>direction 只能 ASC / DESC</li>
+<li>limit ≤ 100</li>
+</ul>
+
+<h2>17. Prompt 和 Validator 的区别</h2>
+<pre><code>Prompt
+→ 软约束
+→ 告诉 AI 应该怎么做
+
+Validator
+→ 硬约束
+→ 不合法就绝对不能执行
+
+MyBatis
+→ 只执行已经通过校验的 QueryPlan</code></pre>
+
+<h2>18. 这次提交的意义</h2>
+<div class="card"><strong>自然语言 → AI 理解 → Tool → 动态 SQL → PostgreSQL → 真实记录 → AI 最终回答</strong></div>
+<p>这是项目第一次真正完成“查到数据库真实数据”的闭环。</p>
+
+<h2>19. Commit 信息</h2>
+<ul>
+<li>Commit：<code>d5c2b42415ac4d60e5a5acb91bf133ff086ae00d</code></li>
+<li>提交说明：<code>日志，把记录查出来</code></li>
+<li>8 files changed</li>
+<li>570 additions / 11 deletions</li>
+</ul>
+
+<h2>20. 项目内访问</h2>
+<p>建议放到：</p>
+<pre><code>src/main/resources/static/ai-query-execute-notes.html</code></pre>
+<p>启动后访问：</p>
+<pre><code>http://localhost:8080/ai-query-execute-notes.html</code></pre>
+
+</main></body>
+</html>

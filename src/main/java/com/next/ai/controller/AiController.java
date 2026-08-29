@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Operation;
 
 import com.next.ai.service.AiService;
 import io.swagger.v3.oas.annotations.Parameter;
+import com.next.ai.vo.common.AiResponse;
 
 @RestController
 public class AiController {
@@ -33,7 +34,7 @@ public class AiController {
 
   @Operation(summary = "问答", description = "根据自然语言问题，从库中查数据")
   @GetMapping("/data")
-  public String findData(
+  public AiResponse findData(
       @Parameter(description = "用户的自然语言查询", example = "查询中午时段的消费记录") @RequestParam(name = "q", defaultValue = "查询中午时段的消费记录") String q) {
     return aiService.getData(q);
   }

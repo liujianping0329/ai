@@ -5,6 +5,7 @@ import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.stereotype.Service;
 
 import com.next.ai.tool.DatabaseTools;
+import com.next.ai.vo.common.AiResponse;
 
 @Service
 public class AiService {
@@ -21,7 +22,7 @@ public class AiService {
     this.databaseTools = databaseTools;
   }
 
-  public String getData(String question) {
+  public AiResponse getData(String question) {
 
     String systemPrompt = """
         你是数据库查询助手。
@@ -50,12 +51,15 @@ public class AiService {
         最终直接回答用户的查询结果，不要只返回 QueryPlan。
             """.formatted(tableCatalogService.getTables());
 
-    return chatClient.prompt()
+    var chatResponse = chatClient.prompt()
         .system(systemPrompt)
         .user(question)
         .tools(databaseTools)
         .advisors(new SimpleLoggerAdvisor())
         .call()
-        .content();
+        .chatResponse();
+
+    return new AiResponse(chatResponse.getResult().getOutput().getText(),
+        chatResponse.getMetadata().getUsage().getTotalTokens());
   }
 }
