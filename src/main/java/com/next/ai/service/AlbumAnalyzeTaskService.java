@@ -3,23 +3,23 @@ package com.next.ai.service;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import com.next.ai.mapper.AlbumMapper;
 import com.next.ai.vo.album.AlbumAnalyzeRequest;
 import com.next.ai.vo.album.AlbumAnalyzeResult;
-import com.next.ai.vo.po.Album;
 
 @Service
 public class AlbumAnalyzeTaskService {
 
   private final AlbumAnalyzeService albumAnalyzeService;
-  private final AlbumMapper albumMapper;
+  private final AlbumAnalyzePersistenceService persistenceService;
   private final NextPushService nextPushService;
 
-  public AlbumAnalyzeTaskService(AlbumAnalyzeService albumAnalyzeService, AlbumMapper albumMapper,
+  public AlbumAnalyzeTaskService(
+      AlbumAnalyzeService albumAnalyzeService,
+      AlbumAnalyzePersistenceService persistenceService,
       NextPushService nextPushService) {
 
     this.albumAnalyzeService = albumAnalyzeService;
-    this.albumMapper = albumMapper;
+    this.persistenceService = persistenceService;
     this.nextPushService = nextPushService;
   }
 
@@ -31,17 +31,12 @@ public class AlbumAnalyzeTaskService {
           request.imageUrl(),
           request.mimeType());
 
-      Album album = new Album();
-      album.setId(request.albumId());
-      album.setTitle(result.title());
-      album.setDetail(result.detail());
-
-      albumMapper.updateById(album);
+      persistenceService.save(request.albumId(), result);
 
       System.out.println(
           "Album AI分析完成: " + request.albumId());
 
-      if (request.isPush()) {
+      if (Boolean.TRUE.equals(request.isPush())) {
         try {
           System.out.println("开始调用Next推送");
           nextPushService.pushAlbum(request, result);
