@@ -34,6 +34,12 @@ public class AlbumItem {
   @TableField("estimated_amount")
   private String estimatedAmount;
 
+  @TableField("center_x_percent")
+  private Double centerXPercent;
+
+  @TableField("center_y_percent")
+  private Double centerYPercent;
+
   @TableField("created_at")
   private OffsetDateTime createdAt;
 }

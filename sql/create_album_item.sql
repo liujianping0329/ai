@@ -6,16 +6,27 @@ create table if not exists public.album_item (
   name text not null,
   alternative_names jsonb not null default '[]'::jsonb,
   estimated_amount text not null default '份量不明',
+  center_x_percent numeric(5, 2),
+  center_y_percent numeric(5, 2),
   created_at timestamptz not null default now(),
 
   constraint album_item_name_not_blank
     check (length(btrim(name)) > 0),
   constraint album_item_alternative_names_is_array
-    check (jsonb_typeof(alternative_names) = 'array')
+    check (jsonb_typeof(alternative_names) = 'array'),
+  constraint album_item_center_x_percent_range
+    check (center_x_percent between 0 and 100),
+  constraint album_item_center_y_percent_range
+    check (center_y_percent between 0 and 100)
 );
 
 -- Also upgrades an existing table created from the previous version of this DDL.
 alter table public.album_item drop column if exists sort_order;
+alter table public.album_item
+  add column if not exists center_x_percent numeric(5, 2)
+    constraint album_item_center_x_percent_range check (center_x_percent between 0 and 100),
+  add column if not exists center_y_percent numeric(5, 2)
+    constraint album_item_center_y_percent_range check (center_y_percent between 0 and 100);
 
 -- Equivalent to creating the table in Supabase Dashboard with RLS unchecked.
 -- Realtime stays disabled because the table is not added to supabase_realtime.
@@ -33,5 +44,7 @@ create index if not exists album_item_album_id_idx
 comment on table public.album_item is 'AI 从相册图片中识别出的组成明细';
 comment on column public.album_item.alternative_names is '备选名称字符串数组，例如 ["意面", "番茄意大利面"]';
 comment on column public.album_item.estimated_amount is '视觉预估量，例如约 200 克、1 碗、2 个';
+comment on column public.album_item.center_x_percent is '物品中心点距离图片左侧的横向百分比，范围 0～100';
+comment on column public.album_item.center_y_percent is '物品中心点距离图片顶部的纵向百分比，范围 0～100';
 
 commit;

@@ -5,5 +5,6 @@ import java.util.List;
 public record AlbumAnalyzeResult(
     String title,
     String detail,
-    List<AlbumAnalyzeItem> items) {
+    List<AlbumAnalyzeItem> items,
+    List<AlbumAnalyzeMarker> markers) {
 }
