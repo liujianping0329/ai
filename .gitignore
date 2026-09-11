@@ -32,3 +32,4 @@ build/
 ### VS Code ###
 .vscode/
 logs/spring.log
+logs/spring.log.*.gz

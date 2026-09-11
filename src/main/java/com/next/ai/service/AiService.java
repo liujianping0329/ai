@@ -11,18 +11,13 @@ import com.next.ai.vo.knowledge.KnowledgeSelection;
 @Service
 public class AiService {
   private final ChatClient chatClient;
-  private final TableIntroService tableCatalogService;
   private final DatabaseTools databaseTools;
   private final KnowledgeService knowledgeService;
 
   public AiService(
-      ChatClient.Builder builder,
-      TableIntroService tableCatalogService,
-      DatabaseTools databaseTools,
-      KnowledgeService knowledgeService) {
+      ChatClient.Builder builder, DatabaseTools databaseTools, KnowledgeService knowledgeService) {
 
     this.chatClient = builder.build();
-    this.tableCatalogService = tableCatalogService;
     this.databaseTools = databaseTools;
     this.knowledgeService = knowledgeService;
   }
