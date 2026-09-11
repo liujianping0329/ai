@@ -14,6 +14,14 @@ import java.nio.charset.StandardCharsets;
 public class RequestLogFilter extends OncePerRequestFilter {
 
   @Override
+  protected boolean shouldNotFilter(HttpServletRequest request) {
+    String uri = request.getRequestURI();
+    return "/health".equals(uri)
+        || uri.startsWith("/swagger-ui")
+        || uri.startsWith("/v3/api-docs");
+  }
+
+  @Override
   protected void doFilterInternal(
       HttpServletRequest request,
       HttpServletResponse response,
