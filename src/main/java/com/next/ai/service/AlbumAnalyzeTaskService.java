@@ -43,7 +43,9 @@ public class AlbumAnalyzeTaskService {
 
       if (request.isPush()) {
         try {
+          System.out.println("开始调用Next推送");
           nextPushService.pushAlbum(request, result);
+          System.out.println("Next推送完成");
         } catch (Exception e) {
           // 推送失败，不要把已经成功的AI分析也算成失败
           System.err.println(
