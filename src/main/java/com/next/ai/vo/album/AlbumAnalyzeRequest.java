@@ -5,6 +5,5 @@ public record AlbumAnalyzeRequest(
         String imageUrl,
         String mimeType,
         Boolean isPush,
-        Long planetId,
-        String userId) {
+        Long planetId) {
 }
